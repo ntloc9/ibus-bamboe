@@ -2,6 +2,7 @@ package main
 
 import (
 	"ibus-bamboo/config"
+	"os"
 	"testing"
 
 	"github.com/BambooEngine/bamboo-core"
@@ -283,6 +284,46 @@ func TestBsEngine(t *testing.T) {
 			})
 		})
 	}
+}
+
+// Trên app native Wayland, engine không lấy được wm class (xem #540) nên bảng
+// chọn input mode phải mở được và lưu tùy chọn vào mode mặc định.
+func TestInputModeSwitcherWithoutWmClass(t *testing.T) {
+	var shiftTilde = [3]uint32{'~', '~', IBusShiftMask}
+	assertEngine(t, testCase{inputMode: config.PreeditIM}, func(t testing.TB, fe *fakeEngine, ie IEngine) {
+		e := ie.(*IBusBambooEngine)
+		t.Cleanup(func() {
+			os.Remove(config.GetConfigPath(e.engineName))
+		})
+		if e.getWmClass() != "" {
+			t.Fatalf("Wm class, expected empty, got (%s).", e.getWmClass())
+		}
+
+		ret, _ := e.ProcessKeyEvent(shiftTilde[0], shiftTilde[1], shiftTilde[2])
+		if !ret {
+			t.Error("Shift+~ should be processed by the engine.")
+		}
+		if !e.isInputModeLTOpened {
+			t.Fatal("Input mode lookup table should be opened.")
+		}
+
+		// Bấm 3 để chọn BackspaceForwardingIM.
+		ret, _ = e.ProcessKeyEvent('3', '3', 0)
+		if !ret {
+			t.Error("Candidate key should be processed by the engine.")
+		}
+		if e.isInputModeLTOpened {
+			t.Error("Input mode lookup table should be closed after selecting a candidate.")
+		}
+		if e.config.DefaultInputMode != config.BackspaceForwardingIM {
+			t.Errorf("Default input mode, expected (%d), got (%d).",
+				config.BackspaceForwardingIM, e.config.DefaultInputMode)
+		}
+		if e.getInputMode() != config.BackspaceForwardingIM {
+			t.Errorf("Input mode, expected (%d), got (%d).",
+				config.BackspaceForwardingIM, e.getInputMode())
+		}
+	})
 }
 
 func assertEngine(t testing.TB, tc testCase, assertFn func(testing.TB, *fakeEngine, IEngine)) {
