@@ -215,8 +215,7 @@ func (e *IBusBambooEngine) processShortcutKey(keyVal, keyCode, state uint32) (bo
 	// fmt.Println("====== Process shortcut for input mode switch")
 	if e.isInputModeLTOpened {
 		return e.ltProcessKeyEvent(keyVal, keyCode, state)
-	} else if e.isShortcutKeyPressed(keyVal, state, KSInputModeSwitch) &&
-		e.getWmClass() != "" {
+	} else if e.isShortcutKeyPressed(keyVal, state, KSInputModeSwitch) {
 		e.resetBuffer()
 		e.isInputModeLTOpened = true
 		e.lastKeyWithShift = true
@@ -289,7 +288,14 @@ func (e *IBusBambooEngine) openLookupTable() {
 		wmClass = wmClasses[1]
 	}
 
-	e.UpdateAuxiliaryText(ibus.NewText("Nhấn (1/2/3/4/5/6/7) để lưu tùy chọn của bạn"), true)
+	var auxText = "Nhấn (1/2/3/4/5/6/7) để lưu tùy chọn của bạn"
+	if wmClass == "" {
+		// Không xác định được cửa sổ đang focus, tùy chọn sẽ thành mode mặc định.
+		wmClass = "mọi ứng dụng chưa cấu hình"
+		auxText += " (áp dụng cho mọi ứng dụng chưa cấu hình riêng)"
+	}
+
+	e.UpdateAuxiliaryText(ibus.NewText(auxText), true)
 
 	lt := ibus.NewLookupTable()
 	lt.PageSize = uint32(len(config.ImLookupTable))
@@ -312,12 +318,8 @@ func (e *IBusBambooEngine) openLookupTable() {
 }
 
 func (e *IBusBambooEngine) ltProcessKeyEvent(keyVal uint32, keyCode uint32, state uint32) (bool, bool) {
-	var wmClasses = e.getWmClass()
 	// e.HideLookupTable()
 	// e.HideAuxiliaryText()
-	if wmClasses == "" {
-		return true, true
-	}
 	if e.isShortcutKeyPressed(keyVal, state, KSInputModeSwitch) {
 		e.closeInputModeCandidates()
 		return true, false
@@ -360,7 +362,14 @@ func (e *IBusBambooEngine) ltProcessKeyEvent(keyVal uint32, keyCode uint32, stat
 
 func (e *IBusBambooEngine) commitInputModeCandidate() {
 	var im = e.inputModeLookupTable.CursorPos + 1
-	e.config.InputModeMapping[e.getWmClass()] = int(im)
+	if wmClass := e.getWmClass(); wmClass != "" {
+		e.config.InputModeMapping[wmClass] = int(im)
+	} else {
+		// Trên các app native Wayland, engine không lấy được wm class (xem #540)
+		// nên không thể lưu tùy chọn theo từng app; lưu vào mode mặc định để
+		// user vẫn đổi được mode thay vì bị khóa hoàn toàn.
+		e.config.DefaultInputMode = int(im)
+	}
 
 	config.SaveConfig(e.config, e.engineName)
 	e.propList = GetPropListByConfig(e.config)
