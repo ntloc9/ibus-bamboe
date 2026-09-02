@@ -558,7 +558,11 @@ func (e *IBusBambooEngine) getWmClass() string {
 func (e *IBusBambooEngine) getLatestWmClass() string {
 	var wmClass string
 	if isGnome {
-		wmClass, _ = gnomeGetFocusWindowClass()
+		// Ưu tiên extension window-calls: chạy được với app native Wayland và
+		// không cần bật unsafe mode như đường Eval bên dưới.
+		if wmClass, _ = windowCallsGetFocusWindowClass(); wmClass == "" {
+			wmClass, _ = gnomeGetFocusWindowClass()
+		}
 	} else if isWayland {
 		wmClass = wlAppId
 	}
