@@ -369,6 +369,17 @@ func TestShouldAppendDeadKeyInBrowserAddressBar(t *testing.T) {
 			expected:  false,
 		},
 		{
+			// Edge trên GNOME Wayland đánh rơi commit_string đứng sau phím giả nên
+			// phải chạy mode 2; ở đó xoá bằng delete_surrounding_text, không cần
+			// dead key.
+			name:      "edge_surrounding_text_is_excluded",
+			wmClass:   edge,
+			inputMode: config.SurroundingTextIM,
+			oldText:   "d",
+			newText:   "đ",
+			expected:  false,
+		},
+		{
 			name:      "edge_shift_left_forwarding_is_excluded",
 			wmClass:   edge,
 			inputMode: config.ShiftLeftForwardingIM,
@@ -461,6 +472,36 @@ func TestFirstTimeSendingBSOnQueuedPath(t *testing.T) {
 
 		if !e.isFirstTimeSendingBS {
 			t.Error("A word starting on the queued path should re-arm the dead key workaround.")
+		}
+	})
+}
+
+// Gõ nhanh thì các phím bị gộp lại và backspace giả đầu tiên của từ do
+// batchCommit gửi, không phải updatePreviousTextInBatch. Trước đây chỉ chỗ thứ
+// hai có chèn dead key, nên trong Edge cái backspace đó bị nuốt: engine tưởng
+// đã xoá xong còn màn hình thì chưa, mọi lần đếm sau đó lệch một ký tự và ăn
+// luôn chữ đằng trước.
+func TestAppendDeadKeyWhenBatchCommitSendsFirstBackSpace(t *testing.T) {
+	assertEngine(t, testCase{inputMode: config.BackspaceForwardingIM}, func(t testing.TB, fe *fakeEngine, ie IEngine) {
+		e := ie.(*IBusBambooEngine)
+		e.wmClasses = "microsoft-edge:microsoft-edge"
+		e.shouldEnqueuKeyStrokes = true
+		e.isFirstTimeSendingBS = true
+
+		// đã gõ "du", màn hình đang là "du"
+		e.preeditor.ProcessKey('d', bamboo.VietnameseMode)
+		e.preeditor.ProcessKey('u', bamboo.VietnameseMode)
+		fe.commitText = ""
+
+		// 'w' tới trong lúc worker còn bận nên nằm lại hàng đợi
+		enqueueKeyPress('w', 'w', 0)
+		// worker xử lý 'o': "du" -> "duo" chỉ thêm chữ nên tự nó không cần
+		// backspace; cái backspace đầu tiên của từ do batchCommit gửi khi gộp
+		// nốt 'w' ("duo" -> "dươ")
+		e.keyPressHandler('o', 'o', 0)
+
+		if want := " ươ"; fe.commitText != want {
+			t.Errorf("Commit text, expected (%s), got (%s).", want, fe.commitText)
 		}
 	})
 }

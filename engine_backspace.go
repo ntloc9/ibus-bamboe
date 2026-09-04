@@ -146,13 +146,6 @@ func (e *IBusBambooEngine) keyPressHandler(keyVal, keyCode, state uint32) bool {
 	isValidKey := isValidState(state) && e.isValidKeyVal(keyVal)
 	newText, isWordBreakRune := e.getCommitText(keyVal, keyCode, state)
 	if len(newText) > 0 {
-		if e.shouldAppendDeadKey(newText, oldText) {
-			fmt.Println("Append a deadkey")
-			e.bsCommitText([]rune(" "))
-			time.Sleep(10 * time.Millisecond)
-			e.isFirstTimeSendingBS = false
-			e.SendBackSpace(1)
-		}
 		e.updatePreviousTextInBatch(oldText, newText, isWordBreakRune)
 		return isValidKey
 	}
@@ -172,14 +165,32 @@ func (e *IBusBambooEngine) getPreeditOffset(newRunes, oldRunes []rune) int {
 	return minLen
 }
 
+// appendDeadKey commit một space rồi xoá ngay. Chỗ nhập của Chromium/Edge nuốt
+// mất cái backspace giả đầu tiên của mỗi từ (rõ nhất ở address bar, do inline
+// autocomplete), nên phải đánh thức nó bằng một cặp commit/xoá trước đã. Không
+// làm thế thì engine tưởng đã xoá được ký tự trong khi màn hình vẫn còn, rồi
+// mọi lần đếm backspace sau đó lệch theo và ăn cả chữ đằng trước.
+func (e *IBusBambooEngine) appendDeadKey() {
+	log.Println("Append a deadkey")
+	e.bsCommitText([]rune(" "))
+	time.Sleep(10 * time.Millisecond)
+	e.isFirstTimeSendingBS = false
+	e.SendBackSpace(1)
+}
+
 func (e *IBusBambooEngine) shouldAppendDeadKey(newText, oldText string) bool {
 	var oldRunes = []rune(oldText)
 	var newRunes = []rune(newText)
 	var offset = e.getPreeditOffset(newRunes, oldRunes)
 
-	// workaround for chrome and firefox's address bar
+	// Workaround cho address bar của chrome/firefox, và chỉ cần cho các mode bơm
+	// phím Backspace giả. ShiftLeftForwardingIM dùng Shift+Left nên không dính;
+	// SurroundingTextIM xoá bằng delete_surrounding_text ngay trong giao thức
+	// input-method nên cũng không cần — chèn dead key ở đó chỉ tốn thêm một round
+	// trip, mà delete_surrounding_text giờ là best-effort nên còn có nguy cơ để
+	// sót lại cái space vừa commit.
 	if e.isFirstTimeSendingBS && offset < len(newRunes) && offset < len(oldRunes) && e.inBrowserList() &&
-		!e.checkInputMode(config.ShiftLeftForwardingIM) {
+		!e.checkInputMode(config.ShiftLeftForwardingIM) && !e.checkInputMode(config.SurroundingTextIM) {
 		return true
 	}
 	return false
@@ -197,6 +208,9 @@ func (e *IBusBambooEngine) updatePreviousText(oldText, newText string) {
 func (e *IBusBambooEngine) updatePreviousTextInBatch(oldText, newText string, isWordBreakRune bool) {
 	offsetRunes, nBackSpace := e.getOffsetRunes(newText, oldText)
 	if nBackSpace > 0 {
+		if e.shouldAppendDeadKey(newText, oldText) {
+			e.appendDeadKey()
+		}
 		e.SendBackSpace(nBackSpace)
 	}
 	var buffer = []string{string(offsetRunes)}
@@ -216,6 +230,8 @@ func (e *IBusBambooEngine) updatePreviousTextInBatch(oldText, newText string, is
 			buffer[len(buffer)-1] = commitText
 			if isWordBreakRune0 {
 				buffer = append(buffer, "")
+				// từ kế tiếp bắt đầu ngay trong batch này
+				e.isFirstTimeSendingBS = true
 			}
 			isDirty = true
 		} else {
@@ -248,6 +264,9 @@ func (e *IBusBambooEngine) batchCommit(oldText string, newText string, nBackSpac
 		return
 	}
 	if patchedBackSpace > nBackSpace {
+		if e.shouldAppendDeadKey(newText, oldText) {
+			e.appendDeadKey()
+		}
 		e.SendBackSpace(patchedBackSpace - nBackSpace)
 	} else if patchedBackSpace < nBackSpace {
 		var offset = utf8.RuneCountInString(oldText) - nBackSpace
