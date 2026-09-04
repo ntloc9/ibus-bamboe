@@ -112,6 +112,27 @@ var keyPressHandler = func(keyVal, keyCode, state uint32) {}
 var keyPressChan = make(chan [3]uint32, 100)
 var lenKeyChan int32
 
+// nPendingKeyPress đếm số phím đã đưa vào keyPressChan mà chưa xử lý xong. Bộ
+// đếm chỉ giảm sau khi keyPressHandler trả về, nên hàng đợi rỗng không bị nhầm
+// là worker đã rảnh: nó vẫn có thể đang ngủ giữa hai lần gửi backspace giả.
+// Đường đi nhanh của bsProcessKeyEvent commit thẳng trên thread D-Bus nên phải
+// đợi bộ đếm này về 0, nếu không hai luồng cùng sờ vào preeditor và commit chen
+// nhau.
+var nPendingKeyPress int32
+
+func enqueueKeyPress(keyVal, keyCode, state uint32) {
+	atomic.AddInt32(&nPendingKeyPress, 1)
+	keyPressChan <- [3]uint32{keyVal, keyCode, state}
+}
+
+func donePendingKeyPress() {
+	atomic.AddInt32(&nPendingKeyPress, -1)
+}
+
+func hasPendingKeyPress() bool {
+	return atomic.LoadInt32(&nPendingKeyPress) > 0
+}
+
 func keyPressCapturing() {
 	for keyEvents := range keyPressChan {
 		atomic.StoreInt32(&lenKeyChan, int32(len(keyPressChan)))
@@ -120,6 +141,7 @@ func keyPressCapturing() {
 		keyPressHandler(keyVal, keyCode, state)
 
 		atomic.AddInt32(&lenKeyChan, -1)
+		donePendingKeyPress()
 	}
 }
 

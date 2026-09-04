@@ -3,6 +3,7 @@ package main
 import (
 	"ibus-bamboo/config"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"github.com/BambooEngine/bamboo-core"
@@ -413,6 +414,55 @@ func TestShouldAppendDeadKeyInBrowserAddressBar(t *testing.T) {
 			})
 		})
 	}
+}
+
+// Đường đi nhanh của bsProcessKeyEvent commit thẳng trên thread D-Bus, còn các
+// phím còn lại chạy trên goroutine của keyPressChan. Hàng đợi rỗng không có
+// nghĩa là goroutine đó đã xong việc — nó vẫn có thể đang ngủ giữa hai lần gửi
+// backspace giả — nên trước đây phím đầu của từ kế tiếp chen lên trước phần
+// commit còn dở của từ trước: text bị cụt và space lạc chỗ. Gõ nhanh trong Edge
+// dính nặng vì workaround dead key làm mỗi phím dấu tốn thêm hơn 100ms.
+func TestFastPathWaitsForKeyPressWorker(t *testing.T) {
+	assertEngine(t, testCase{inputMode: config.BackspaceForwardingIM}, func(t testing.TB, fe *fakeEngine, ie IEngine) {
+		e := ie.(*IBusBambooEngine)
+		e.shouldEnqueuKeyStrokes = true
+
+		// worker vừa lấy một sự kiện ra khỏi hàng đợi và đang xử lý nó
+		atomic.AddInt32(&nPendingKeyPress, 1)
+		defer donePendingKeyPress()
+
+		if ret, _ := e.ProcessKeyEvent('t', 't', 0); !ret {
+			t.Error("Key event should be processed by the engine.")
+		}
+		if fe.commitText != "" {
+			t.Errorf("Nothing should be committed while the worker is busy, got (%s).", fe.commitText)
+		}
+		select {
+		case keyEvents := <-keyPressChan:
+			donePendingKeyPress()
+			if keyEvents[0] != 't' {
+				t.Errorf("Enqueued key, expected (t), got (%c).", rune(keyEvents[0]))
+			}
+		default:
+			t.Error("Key event should have been enqueued.")
+		}
+	})
+}
+
+// Cờ isFirstTimeSendingBS trước đây chỉ được bật ở đường đi nhanh, nên khi phím
+// đầu của một từ đi qua hàng đợi thì workaround dead key không còn chạy nữa.
+func TestFirstTimeSendingBSOnQueuedPath(t *testing.T) {
+	assertEngine(t, testCase{inputMode: config.BackspaceForwardingIM}, func(t testing.TB, fe *fakeEngine, ie IEngine) {
+		e := ie.(*IBusBambooEngine)
+		e.wmClasses = "microsoft-edge:microsoft-edge"
+		e.isFirstTimeSendingBS = false
+
+		e.keyPressHandler('t', 't', 0)
+
+		if !e.isFirstTimeSendingBS {
+			t.Error("A word starting on the queued path should re-arm the dead key workaround.")
+		}
+	})
 }
 
 func assertEngine(t testing.TB, tc testCase, assertFn func(testing.TB, *fakeEngine, IEngine)) {

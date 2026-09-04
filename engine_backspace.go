@@ -41,7 +41,7 @@ func (e *IBusBambooEngine) bsProcessKeyEvent(keyVal uint32, keyCode uint32, stat
 		return false, nil
 	}
 	var keyRune = rune(keyVal)
-	if e.config.IBflags&config.IBmacroEnabled == 0 && len(keyPressChan) == 0 && e.getRawKeyLen() == 0 && !inKeyList(e.preeditor.GetInputMethod().AppendingKeys, keyRune) {
+	if e.config.IBflags&config.IBmacroEnabled == 0 && !hasPendingKeyPress() && e.getRawKeyLen() == 0 && !inKeyList(e.preeditor.GetInputMethod().AppendingKeys, keyRune) {
 		e.updateLastKeyWithShift(keyVal, state)
 		if e.preeditor.CanProcessKey(keyRune) && isValidState(state) {
 			e.isFirstTimeSendingBS = true
@@ -88,7 +88,7 @@ func (e *IBusBambooEngine) bsProcessKeyEvent(keyVal uint32, keyCode uint32, stat
 		}
 		// if the main thread is busy processing, the keypress events come all mixed up
 		// so we enqueue these keypress events and process them sequentially on another thread
-		keyPressChan <- [3]uint32{keyVal, keyCode, state}
+		enqueueKeyPress(keyVal, keyCode, state)
 		return true, nil
 	} else {
 		return e.keyPressHandler(keyVal, keyCode, state), nil
@@ -110,6 +110,12 @@ func (e *IBusBambooEngine) keyPressHandler(keyVal, keyCode, state uint32) bool {
 		e.keyPressDelay = 0
 	}
 	oldText := e.getPreeditString()
+	if oldText == "" {
+		// Từ mới có thể bắt đầu ngay trên hàng đợi khi worker còn bận, tức là
+		// đường đi nhanh (chỗ duy nhất bật cờ này) bị bỏ qua. Không đánh dấu lại
+		// thì workaround dead key của thanh địa chỉ sẽ không chạy cho từ đó.
+		e.isFirstTimeSendingBS = true
+	}
 	_, oldMacText := e.getMacroText()
 	if keyVal == IBusBackSpace {
 		if e.getRawKeyLen() > 0 {
@@ -202,6 +208,7 @@ func (e *IBusBambooEngine) updatePreviousTextInBatch(oldText, newText string, is
 	var isDirty = false
 	for i := 0; i < len(keyPressChan); i++ {
 		var keyEvents = <-keyPressChan
+		donePendingKeyPress()
 		var keyVal, keyCode, state = keyEvents[0], keyEvents[1], keyEvents[2]
 		isValidKey := isValidState(state) && e.isValidKeyVal(keyVal)
 		if isValidKey {
