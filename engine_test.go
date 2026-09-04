@@ -326,6 +326,95 @@ func TestInputModeSwitcherWithoutWmClass(t *testing.T) {
 	})
 }
 
+// Address bar của browser ăn mất backspace giả nếu không commit rồi xoá một space
+// trước (xem shouldAppendDeadKey). Edge chạy native Wayland nên wm class của nó
+// không cùng dạng với các entry X11 khác trong DefaultBrowserList.
+func TestShouldAppendDeadKeyInBrowserAddressBar(t *testing.T) {
+	const edge = "microsoft-edge:microsoft-edge"
+	for _, tc := range []struct {
+		name         string
+		wmClass      string
+		inputMode    int
+		oldText      string
+		newText      string
+		notFirstTime bool
+		expected     bool
+	}{
+		{
+			// Gõ "dd" -> "đ", ký tự cuối bị thay nên cần backspace.
+			name:      "edge_replaces_last_rune",
+			wmClass:   edge,
+			inputMode: config.BackspaceForwardingIM,
+			oldText:   "d",
+			newText:   "đ",
+			expected:  true,
+		},
+		{
+			// Gõ "loo" -> "lô", cũng phải backspace.
+			name:      "edge_replaces_tone",
+			wmClass:   edge,
+			inputMode: config.BackspaceForwardingIM,
+			oldText:   "lo",
+			newText:   "lô",
+			expected:  true,
+		},
+		{
+			// Chỉ thêm ký tự, không cần backspace nên không cần workaround.
+			name:      "edge_appends_only",
+			wmClass:   edge,
+			inputMode: config.BackspaceForwardingIM,
+			oldText:   "l",
+			newText:   "lo",
+			expected:  false,
+		},
+		{
+			name:      "edge_shift_left_forwarding_is_excluded",
+			wmClass:   edge,
+			inputMode: config.ShiftLeftForwardingIM,
+			oldText:   "d",
+			newText:   "đ",
+			expected:  false,
+		},
+		{
+			name:         "edge_but_not_first_backspace",
+			wmClass:      edge,
+			inputMode:    config.BackspaceForwardingIM,
+			oldText:      "d",
+			newText:      "đ",
+			notFirstTime: true,
+			expected:     false,
+		},
+		{
+			name:      "not_a_browser",
+			wmClass:   "gnome-terminal-server:gnome-terminal-server",
+			inputMode: config.BackspaceForwardingIM,
+			oldText:   "d",
+			newText:   "đ",
+			expected:  false,
+		},
+		{
+			name:      "unknown_wm_class",
+			wmClass:   "",
+			inputMode: config.BackspaceForwardingIM,
+			oldText:   "d",
+			newText:   "đ",
+			expected:  false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertEngine(t, testCase{inputMode: tc.inputMode}, func(t testing.TB, fe *fakeEngine, ie IEngine) {
+				e := ie.(*IBusBambooEngine)
+				e.wmClasses = tc.wmClass
+				e.isFirstTimeSendingBS = !tc.notFirstTime
+				if got := e.shouldAppendDeadKey(tc.newText, tc.oldText); got != tc.expected {
+					t.Errorf("shouldAppendDeadKey(%s, %s), expected (%v), got (%v).",
+						tc.newText, tc.oldText, tc.expected, got)
+				}
+			})
+		})
+	}
+}
+
 func assertEngine(t testing.TB, tc testCase, assertFn func(testing.TB, *fakeEngine, IEngine)) {
 	fe := NewFakeEngine()
 	engineName := "test"

@@ -68,6 +68,9 @@ var DefaultBrowserList = []string{
 	"Navigator:Firefox",
 	"google-chrome:Google-chrome",
 	"chromium-browser:Chromium-browser",
+	// Edge native Wayland: mutter lấy cả instance và class từ app_id nên wm class
+	// không cùng dạng với các entry X11 ở trên.
+	"microsoft-edge:microsoft-edge",
 }
 
 func getEngineSubFile(fileName string) string {
