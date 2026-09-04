@@ -168,5 +168,6 @@ Nếu bạn muốn hiểu thêm về dự án có thể xem thêm ở file này.
 
 Đừng ngần ngại nếu bạn có 1 Pull Request hữu dụng. Hãy gửi lại nếu bạn muốn đóng góp cho dự án.
 
+test
 ## Giấy phép
 ibus-bamboo là phần mềm tự do nguồn mở, được phát hành dưới các quy định ghi trong Giấy phép Công cộng GNU (GNU General Public License v3.0).
